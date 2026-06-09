@@ -1,12 +1,12 @@
-"""Stage 2: LLM + RAG / Tools
+"""Stage 2: LLM + RAG / Tools.
 
 Adds retrieval-augmented generation and tool use to ground LLM responses
-in external data. The LLM can now search a legal knowledge base and
-calculate damages — but the orchestration is manual (one tool-call loop).
+in external data. The orchestration is still manual: one tool-calling pass,
+then one final LLM answer.
 """
 
-import asyncio
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -27,11 +27,11 @@ LEGAL_KNOWLEDGE = [
         "keywords": ["breach", "contract", "remedies", "damages", "ucc"],
         "text": (
             "Under the Uniform Commercial Code (UCC) Article 2, remedies for breach of contract "
-            "include: (1) expectation damages — placing the non-breaching party in the position "
+            "include: (1) expectation damages - placing the non-breaching party in the position "
             "they would have been in had the contract been performed; (2) consequential damages "
             "for foreseeable losses (Hadley v. Baxendale, 1854); (3) specific performance when "
-            "the subject matter is unique; (4) cover damages — the cost of obtaining substitute "
-            "performance. The statute of limitations is typically 4 years (UCC § 2-725)."
+            "the subject matter is unique; (4) cover damages - the cost of obtaining substitute "
+            "performance. The statute of limitations is typically 4 years (UCC 2-725)."
         ),
     },
     {
@@ -39,12 +39,12 @@ LEGAL_KNOWLEDGE = [
         "keywords": ["nda", "non-disclosure", "confidential", "trade secret", "agreement"],
         "text": (
             "NDA breaches may trigger both contractual and statutory liability. Under the Defend "
-            "Trade Secrets Act (DTSA, 18 U.S.C. § 1836), misappropriation of trade secrets can "
+            "Trade Secrets Act (DTSA, 18 U.S.C. 1836), misappropriation of trade secrets can "
             "result in: (1) injunctive relief; (2) actual damages plus unjust enrichment; "
             "(3) exemplary damages up to 2x actual damages for willful misappropriation; "
             "(4) attorney's fees. State Uniform Trade Secrets Act (UTSA) versions provide "
             "additional remedies. Criminal prosecution is possible under the Economic Espionage "
-            "Act (18 U.S.C. § 1832) with penalties up to $5M for individuals."
+            "Act (18 U.S.C. 1832) with penalties up to $5M for individuals."
         ),
     },
     {
@@ -65,7 +65,7 @@ LEGAL_KNOWLEDGE = [
             "Liquidated damages clauses in NDAs are enforceable if: (1) actual damages would be "
             "difficult to calculate at the time of contracting; (2) the stipulated amount is a "
             "reasonable estimate of anticipated harm. Courts will void clauses that function as "
-            "penalties (Restatement (Second) of Contracts § 356). Typical NDA liquidated damages "
+            "penalties (Restatement (Second) of Contracts 356). Typical NDA liquidated damages "
             "range from $10,000 to $500,000 depending on the nature of the confidential information."
         ),
     },
@@ -75,13 +75,28 @@ LEGAL_KNOWLEDGE = [
         "text": (
             "Courts routinely grant temporary restraining orders (TROs) and preliminary injunctions "
             "for NDA breaches because: (1) confidential information, once disclosed, cannot be "
-            "'un-disclosed' — making monetary damages inadequate; (2) irreparable harm is presumed "
+            "'un-disclosed' - making monetary damages inadequate; (2) irreparable harm is presumed "
             "for trade secret misappropriation in many jurisdictions. The movant must show "
             "likelihood of success on the merits, irreparable harm, balance of equities, and "
             "public interest (Winter v. Natural Resources Defense Council, 2008)."
         ),
     },
+    {
+        "id": "labor_law",
+        "keywords": ["lao động", "sa thải", "hợp đồng lao động", "labor", "termination"],
+        "text": (
+            "Theo Bộ luật Lao động Việt Nam 2019, người sử dụng lao động có thể "
+            "đơn phương chấm dứt hợp đồng trong các trường hợp: (1) người lao động "
+            "thường xuyên không hoàn thành công việc; (2) bị ốm đau, tai nạn đã điều trị "
+            "12 tháng chưa khỏi; (3) thiên tai, hỏa hoạn; (4) người lao động đủ tuổi nghỉ hưu."
+        ),
+    },
 ]
+
+
+def normalize_text(text: str) -> str:
+    """Normalize text for simple keyword matching."""
+    return re.sub(r"\s+", " ", text.strip().lower())
 
 
 # ---------------------------------------------------------------------------
@@ -89,22 +104,27 @@ LEGAL_KNOWLEDGE = [
 # ---------------------------------------------------------------------------
 
 @tool
-def search_legal_database(query: str) -> str:
-    """Search the legal knowledge base for relevant statutes, case law, and legal principles."""
-    query_words = set(query.lower().split())
+def search_legal_knowledge(query: str) -> str:
+    """Tra cứu knowledge base pháp lý theo từ khóa."""
+    normalized_query = normalize_text(query)
     scored = []
+
     for entry in LEGAL_KNOWLEDGE:
-        overlap = len(query_words & set(entry["keywords"]))
+        overlap = 0
+        for keyword in entry["keywords"]:
+            if normalize_text(keyword) in normalized_query:
+                overlap += 1
         if overlap > 0:
             scored.append((overlap, entry))
-    scored.sort(key=lambda x: x[0], reverse=True)
-    top = scored[:2]
-    if not top:
-        return "No relevant legal sources found for this query."
-    results = []
-    for _, entry in top:
-        results.append(f"[{entry['id']}] {entry['text']}")
-    return "\n\n".join(results)
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    top_results = scored[:2]
+    if not top_results:
+        return "Khong tim thay thong tin phu hop trong knowledge base phap ly."
+
+    return "\n\n".join(
+        f"[{entry['id']}] {entry['text']}" for _, entry in top_results
+    )
 
 
 @tool
@@ -135,80 +155,124 @@ def calculate_damages(breach_type: str, contract_value: float) -> str:
     )
 
 
-TOOLS = [search_legal_database, calculate_damages]
+@tool
+def check_statute_of_limitations(case_type: str) -> str:
+    """Kiểm tra thời hiệu khởi kiện theo loại vụ án.
 
-QUESTION = "What are the legal consequences if a company breaches a non-disclosure agreement?"
+    Args:
+        case_type: Loại vụ án (contract, tort, property)
+    """
+    limits = {
+        "contract": "4 năm (UCC § 2-725)",
+        "tort": "2-3 năm tùy bang",
+        "property": "5 năm",
+    }
+    return limits.get(case_type.lower(), "Không xác định")
 
 
-async def main():
+TOOLS = [search_legal_knowledge, calculate_damages, check_statute_of_limitations]
+TEST_QUESTIONS = [
+    "Tôi bị công ty sa thải trước thời hạn hợp đồng lao động thì cần lưu ý những vấn đề pháp lý nào?",
+    "What is the statute of limitations for a contract dispute?",
+]
+
+
+def run_question(question: str) -> None:
+    """Run one manual tool-calling pass for a single question."""
+    print()
+    print("=" * 70)
+    print(f"Question:\n{question}")
+    print("-" * 70)
+
+    llm = get_llm(temperature=0.3, max_tokens=700)
+    llm_with_tools = llm.bind_tools(TOOLS)
+    tool_map = {tool_fn.name: tool_fn for tool_fn in TOOLS}
+
+    messages = [
+        SystemMessage(
+            content=(
+                "You are a legal expert for a Stage 2 demo. "
+                "Use tools when they help. For labor, contract, NDA, or statute questions, "
+                "prefer grounded answers using the available tools. "
+                "If the user asks about statute of limitations, use check_statute_of_limitations. "
+                "If the user asks about legal knowledge or labor issues, use search_legal_knowledge. "
+                "Use calculate_damages only for monetary estimate questions. "
+                "Keep the final answer concise, clear, and under 220 words."
+            )
+        ),
+        HumanMessage(content=question),
+    ]
+
+    print("\n>>> Step 1: Asking LLM with tools bound...\n")
+    response = llm_with_tools.invoke(messages)
+    messages.append(response)
+
+    if not response.tool_calls:
+        print("No tool call. Direct answer:")
+        print(response.content)
+        return
+
+    print(f">>> Step 2: Executing {len(response.tool_calls)} tool call(s)...\n")
+    for tool_call in response.tool_calls:
+        print(f"Tool called: {tool_call['name']}")
+        print(f"Tool args: {tool_call['args']}")
+
+        tool_fn = tool_map[tool_call["name"]]
+        result = tool_fn.invoke(tool_call["args"])
+
+        print("Tool result:")
+        print(result)
+        print()
+
+        messages.append(
+            ToolMessage(content=result, tool_call_id=tool_call["id"])
+        )
+
+    print(">>> Step 3: Asking the LLM for the final grounded answer...\n")
+    messages.append(
+        HumanMessage(
+            content=(
+                "Using the tool results above, provide the final answer now. "
+                "Do not call any more tools. Keep it concise and practical."
+            )
+        )
+    )
+    final_response = llm.invoke(messages)
+    print("Final answer:")
+    print(final_response.content)
+
+
+def main() -> None:
     print("=" * 70)
     print("STAGE 2: LLM + RAG / Tools")
     print("=" * 70)
     print()
     print("[How it works]")
-    print("  1. LLM receives tools (search_legal_database, calculate_damages)")
-    print("  2. LLM decides which tools to call and with what arguments")
-    print("  3. We execute the tools and feed results back to the LLM")
-    print("  4. LLM generates a final answer grounded in retrieved data")
+    print("  1. We create the LLM with get_llm()")
+    print("  2. We bind tools with llm.bind_tools(tools)")
+    print("  3. The LLM may request tool calls")
+    print("  4. We manually execute tools once")
+    print("  5. We send tool results back and get the final answer")
     print()
-    print(f"Question: {QUESTION}")
-    print("-" * 70)
+    print("Tools available:")
+    print("  - search_legal_knowledge")
+    print("  - calculate_damages")
+    print("  - check_statute_of_limitations")
 
-    llm = get_llm()
-    llm_with_tools = llm.bind_tools(TOOLS)
-    tool_map = {t.name: t for t in TOOLS}
-
-    messages = [
-        SystemMessage(
-            content=(
-                "You are a legal expert with access to a legal knowledge base and a damage "
-                "calculator. Use the tools provided to ground your analysis in specific statutes "
-                "and case law. Always search the database before answering. "
-                "Keep your final response under 400 words."
-            )
-        ),
-        HumanMessage(content=QUESTION),
-    ]
-
-    # --- Step 1: LLM decides which tools to call ---
-    print("\n>>> Step 1: Asking LLM (with tools bound)...\n")
-    response = await llm_with_tools.ainvoke(messages)
-    messages.append(response)
-
-    if not response.tool_calls:
-        print("LLM chose not to use any tools. Direct answer:")
-        print(response.content)
-        return
-
-    # --- Step 2: Execute tool calls ---
-    print(f">>> Step 2: LLM requested {len(response.tool_calls)} tool call(s):\n")
-    for tc in response.tool_calls:
-        print(f"  Tool: {tc['name']}")
-        print(f"  Args: {tc['args']}")
-
-        tool_fn = tool_map[tc["name"]]
-        result = await tool_fn.ainvoke(tc["args"])
-        print(f"  Result: {result[:200]}{'...' if len(result) > 200 else ''}")
-        print()
-
-        messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
-
-    # --- Step 3: LLM generates final grounded answer ---
-    print(">>> Step 3: LLM generating final answer with tool results...\n")
-    final_response = await llm_with_tools.ainvoke(messages)
-    print(final_response.content)
+    for question in TEST_QUESTIONS:
+        run_question(question)
 
     print()
     print("-" * 70)
     print("[Improvements over Stage 1]")
-    print("  + Grounded: answers cite specific statutes (DTSA, UCC, etc.)")
-    print("  + Tool use: can search databases and calculate damages")
+    print("  + Grounded: answers can use retrieved legal knowledge")
+    print("  + Tool use: can search a knowledge base or check limitation periods")
     print("  + More accurate: retrieval reduces hallucination risk")
     print()
     print("[Limitations of Stage 2]")
     print("  - Manual orchestration: we wrote the tool-call loop ourselves")
     print("  - Single pass: only one round of tool calls")
-    print("  - No reasoning loop: LLM can't decide to search again if needed")
+    print("  - No reasoning loop: the LLM cannot decide to search again if needed")
     print()
     print("Next: Stage 3 wraps this in an autonomous ReAct agent loop.")
     print("=" * 70)
@@ -216,4 +280,4 @@ async def main():
 
 if __name__ == "__main__":
     load_dotenv()
-    asyncio.run(main())
+    main()
