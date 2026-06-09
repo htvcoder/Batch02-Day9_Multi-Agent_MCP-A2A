@@ -1,13 +1,9 @@
-"""Stage 1: Direct LLM Calling
+"""Stage 1: Direct LLM Calling.
 
-The simplest way to use an LLM — send a message, get a response.
+The simplest way to use an LLM: send messages, get a response.
 No tools, no memory, no agents. Just a direct API call.
-
-This is stateless: the LLM has no access to external data sources,
-cannot look things up, and relies entirely on its training data.
 """
 
-import asyncio
 import os
 import sys
 
@@ -19,36 +15,42 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from common.llm import get_llm
 
-QUESTION = "What are the legal consequences if a company breaches a non-disclosure agreement?"
+QUESTION = (
+    "Mot cong ty don phuong cham dut hop dong dich vu truoc thoi han "
+    "thi co the phat sinh nhung rui ro phap ly nao?"
+)
 
 
-async def main():
+def main():
     print("=" * 70)
     print("STAGE 1: Direct LLM Calling")
     print("=" * 70)
     print()
     print("[How it works]")
-    print("  1. We send a system prompt + user question directly to the LLM")
-    print("  2. The LLM responds from its training data only")
-    print("  3. No tools, no retrieval, no external knowledge")
+    print("  1. We get the LLM with get_llm()")
+    print("  2. We send a SystemMessage + HumanMessage directly to the LLM")
+    print("  3. The LLM responds from its training data only")
+    print("  4. No tools, no retrieval, no external knowledge")
     print()
-    print(f"Question: {QUESTION}")
+    print(f"Question:\n{QUESTION}")
     print("-" * 70)
 
-    llm = get_llm()
+    llm = get_llm(max_tokens=1024)
 
     messages = [
         SystemMessage(
             content=(
-                "You are a legal expert. Provide a clear, concise analysis "
-                "of the legal question asked. Keep your response under 300 words."
+                "Ban la mot chuyen gia phap ly. Hay tra loi ro rang, de hieu, "
+                "co cau truc ngan gon, neu ra cac rui ro phap ly chinh va luu y "
+                "rang day chi la phan tich thong tin chung, khong phai tu van phap ly cu the."
             )
         ),
         HumanMessage(content=QUESTION),
     ]
 
-    print("\n>>> Calling LLM directly (no tools, no RAG)...\n")
-    response = await llm.ainvoke(messages)
+    print("\n>>> Calling LLM directly with llm.invoke(messages)...\n")
+    response = llm.invoke(messages)
+    print("Answer:")
     print(response.content)
 
     print()
@@ -65,4 +67,4 @@ async def main():
 
 if __name__ == "__main__":
     load_dotenv()
-    asyncio.run(main())
+    main()
