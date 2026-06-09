@@ -53,13 +53,14 @@ class LawState(TypedDict):
 
 async def analyze_law(state: LawState) -> dict:
     """LLM analysis from a contract / general law perspective."""
-    llm = get_llm()
+    llm = get_llm(temperature=0.3, max_tokens=450)
     messages = [
         SystemMessage(
             content=(
                 "You are a senior corporate litigation attorney specialising in contract law, "
                 "tort law, and general business law. Analyse the legal aspects of the question "
-                "thoroughly, covering relevant statutes, case law principles, and liability exposure."
+                "briefly, focusing on the main legal issues, likely liability, and practical next steps. "
+                "Keep the analysis under 140 words."
             )
         ),
         HumanMessage(content=state["question"]),
@@ -79,7 +80,7 @@ async def check_routing(state: LawState) -> dict:
         logger.info("Max delegation depth reached (%d); skipping sub-agents", depth)
         return {"needs_tax": False, "needs_compliance": False}
 
-    llm = get_llm()
+    llm = get_llm(temperature=0.0, max_tokens=120)
     messages = [
         SystemMessage(
             content=(
@@ -175,33 +176,28 @@ async def call_compliance(state: LawState) -> dict:
 
 
 async def aggregate(state: LawState) -> dict:
-    """Combine law_analysis, tax_result, and compliance_result into a final answer."""
-    llm = get_llm()
-
+    """Combine law_analysis, tax_result, and compliance_result deterministically."""
     sections: list[str] = []
+
     if state.get("law_analysis"):
-        sections.append(f"## Legal Analysis\n{state['law_analysis']}")
+        sections.append(f"Legal analysis:\n{state['law_analysis']}")
     if state.get("tax_result"):
-        sections.append(f"## Tax Analysis\n{state['tax_result']}")
+        sections.append(f"Tax analysis:\n{state['tax_result']}")
     if state.get("compliance_result"):
-        sections.append(f"## Regulatory Compliance Analysis\n{state['compliance_result']}")
+        sections.append(f"Compliance analysis:\n{state['compliance_result']}")
 
-    combined = "\n\n---\n\n".join(sections)
+    if not sections:
+        final_answer = (
+            "No specialist analysis was generated. This result is for educational purposes "
+            "only and should not replace advice from licensed attorneys."
+        )
+    else:
+        final_answer = (
+            "\n\n".join(sections)
+            + "\n\nDisclaimer: This summary is for educational purposes only and is not legal advice."
+        )
 
-    messages = [
-        SystemMessage(
-            content=(
-                "You are a senior legal counsel synthesising specialist analyses into a "
-                "comprehensive, well-structured response for the client. Combine the following "
-                "analyses into a cohesive answer with clear sections. Avoid redundancy. "
-                "End with a brief disclaimer that the analysis is educational and the client "
-                "should consult licensed attorneys for their specific situation."
-            )
-        ),
-        HumanMessage(content=combined),
-    ]
-    result = await llm.ainvoke(messages)
-    return {"final_answer": result.content}
+    return {"final_answer": final_answer}
 
 
 # ---------------------------------------------------------------------------

@@ -71,6 +71,14 @@ class CustomerAgentExecutor(AgentExecutor):
                         answer = content
                         break
 
+            # If the customer-facing AI only produced a holding message, fall back
+            # to the delegated specialist result carried in the last ToolMessage.
+            if answer and "submitted your question" in answer.lower():
+                for msg in reversed(result.get("messages", [])):
+                    if msg.__class__.__name__ == "ToolMessage" and getattr(msg, "content", ""):
+                        answer = msg.content
+                        break
+
             if not answer:
                 answer = "I was unable to process your legal question at this time."
 

@@ -6,6 +6,7 @@ Sends a legal question to the Customer Agent and prints the response.
 import asyncio
 import os
 import sys
+from uuid import uuid4
 
 import httpx
 from dotenv import load_dotenv
@@ -15,13 +16,18 @@ load_dotenv()
 CUSTOMER_AGENT_URL = os.getenv("CUSTOMER_AGENT_URL", "http://localhost:10100")
 
 QUESTION = (
-    "If a company breaks a contract and avoids taxes, "
-    "what are the legal and regulatory consequences?"
+    "Our company may hide overseas revenue, share customer data with a US partner, "
+    "and wants to understand legal, tax, and regulatory risks. What should we consider?"
 )
 
 
 async def main() -> None:
+    trace_id = str(uuid4())
+    context_id = str(uuid4())
+
     print(f"Connecting to Customer Agent at {CUSTOMER_AGENT_URL}")
+    print(f"Trace ID: {trace_id}")
+    print(f"Context ID: {context_id}")
     print(f"Question: {QUESTION}")
     print("-" * 60)
 
@@ -37,9 +43,8 @@ async def main() -> None:
             print("Make sure all services are running (./start_all.sh)")
             sys.exit(1)
 
-        from a2a.types import AgentCard, Message, Part, Role, TextPart, MessageSendParams
+        from a2a.types import AgentCard, Message, Part, Role, TextPart
         from a2a.client import A2AClient
-        from uuid import uuid4
 
         agent_card = AgentCard.model_validate(card_resp.json())
         print(f"Connected to agent: {agent_card.name} v{agent_card.version}")
@@ -54,6 +59,12 @@ async def main() -> None:
             role=Role.user,
             parts=[Part(root=TextPart(text=QUESTION))],
             message_id=str(uuid4()),
+            context_id=context_id,
+            metadata={
+                "trace_id": trace_id,
+                "context_id": context_id,
+                "delegation_depth": 0,
+            },
         )
         request = SendMessageRequest(
             id=str(uuid4()),
@@ -79,6 +90,13 @@ async def main() -> None:
                 # Message with parts
                 elif hasattr(result, "parts") and result.parts:
                     for part in result.parts:
+                        p = part.root if hasattr(part, "root") else part
+                        if hasattr(p, "text"):
+                            result_text += p.text
+                # Failed/in-progress task status message
+                elif hasattr(result, "status") and getattr(result.status, "message", None):
+                    status_message = result.status.message
+                    for part in getattr(status_message, "parts", []) or []:
                         p = part.root if hasattr(part, "root") else part
                         if hasattr(p, "text"):
                             result_text += p.text

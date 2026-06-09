@@ -1,8 +1,4 @@
-"""Compliance Agent LangGraph definition.
-
-Uses create_react_agent with a regulatory-compliance-specialised system prompt.
-No tools — it answers purely from LLM knowledge.
-"""
+"""Compliance Agent LangGraph definition."""
 
 from __future__ import annotations
 
@@ -39,7 +35,7 @@ should consult a licensed attorney for specific compliance advice.
 
 def create_graph():
     """Return a compiled LangGraph create_react_agent for compliance questions."""
-    llm = get_llm()
+    llm = get_llm(temperature=0.3, max_tokens=400)
     graph = create_react_agent(
         model=llm,
         tools=[],

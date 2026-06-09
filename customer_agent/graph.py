@@ -33,8 +33,7 @@ legal services platform. Your job is to:
 
 Always use the `delegate_to_legal_agent` tool for any substantive legal question.
 Do not attempt to answer complex legal questions from your own knowledge alone.
-
-Be professional, clear, and make the specialist response accessible to the user.
+After the tool returns, present that specialist result directly and concisely.
 """
 
 
@@ -87,7 +86,7 @@ def build_graph(trace_id: str, context_id: str, depth: int) -> Any:
             logger.exception("delegate_to_legal_agent failed: %s", exc)
             return f"Could not reach the Law Agent: {exc}"
 
-    llm = get_llm()
+    llm = get_llm(temperature=0.3, max_tokens=400)
     graph = create_react_agent(
         model=llm,
         tools=[delegate_to_legal_agent],
